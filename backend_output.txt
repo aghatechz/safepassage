@@ -1,0 +1,4 @@
+ℹ️ Local Disk Storage Provider configured at backend/uploads/
+🚀 SafePassage API Server started on port 5000
+📡 Serving request from instance: DESKTOP-BMCRV0M
+✅ Database connected successfully at: 2026-07-10T05:58:30.442Z
