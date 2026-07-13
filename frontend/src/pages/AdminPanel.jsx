@@ -8,7 +8,7 @@ export default function AdminPanel({ setServedBy }) {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(null);
   
-  const [name, setName] = useState('');
+  const [name, setName] = useState('');  
   const [location, setLocation] = useState('');
   const [latitude, setLatitude] = useState('');
   const [longitude, setLongitude] = useState('');

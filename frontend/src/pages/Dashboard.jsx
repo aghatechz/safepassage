@@ -60,7 +60,7 @@ export default function Dashboard({ setServedBy }) {
       <div className="gradient-teal-subtle rounded-2xl border border-teal-100 p-6 sm:p-8 mb-8 shadow-sm">
         <div className="flex items-center gap-2 mb-2">
           <span className="badge-teal text-[10px]">
-            <Shield className="h-3 w-3" /> Crowd-Sourced Verification Platform
+            <Shield className="h-3 w-3" /> Crowd-Sourced Verification Platformm
           </span>
         </div>
         <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">
