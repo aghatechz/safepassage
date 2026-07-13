@@ -25,9 +25,9 @@ project. This pipeline only ships **application code**.
 ## One-time setup (required before the pipeline can deploy)
 
 1. **Create a deploy IAM user** in AWS with a policy limited to:
-   - `s3:PutObject` on `arn:aws:s3:::axiomra-dev-assets-b5026054/deploy/*`
+   - `s3:PutObject` on `arn:aws:s3:::safepassage-dev-assets-b5026054/deploy/*`
    - `autoscaling:StartInstanceRefresh`, `autoscaling:DescribeAutoScalingGroups`
-     on the `axiomra-dev-asg` group.
+     on the `safepassage-dev-asg` group.
 
 2. **Add the keys as GitHub repo secrets**
    (repo → Settings → Secrets and variables → Actions → *New repository secret*):
@@ -43,10 +43,12 @@ project. This pipeline only ships **application code**.
 
 ## Config reference (edit `deploy.yml` env if infra changes)
 
-| Variable        | Value                                                        |
-|-----------------|-------------------------------------------------------------|
-| `AWS_REGION`    | `us-east-1`                                                  |
-| `S3_BUCKET`     | `axiomra-dev-assets-b5026054`                                |
-| `S3_KEY`        | `deploy/app-latest.tar.gz`                                   |
-| `ASG_NAME`      | `axiomra-dev-asg`                                            |
-| `VITE_API_URL`  | `http://axiomra-dev-alb-443631076.us-east-1.elb.amazonaws.com` |
+| Variable        | Value                            |
+|-----------------|----------------------------------|
+| `AWS_REGION`    | `us-east-1`                      |
+| `S3_BUCKET`     | `safepassage-dev-assets-b5026054`|
+| `S3_KEY`        | `deploy/app-latest.tar.gz`       |
+| `ASG_NAME`      | `safepassage-dev-asg`            |
+
+> The frontend calls the API via a same-origin relative path (`/api`), so no
+> ALB URL needs to be configured — the build works behind any host.

@@ -20,11 +20,11 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  S3_BUCKET: axiomra-dev-assets-b5026054
+  S3_BUCKET: safepassage-dev-assets-b5026054
   S3_KEY: deploy/app-latest.tar.gz
-  ASG_NAME: axiomra-dev-asg
-  # Frontend calls the API through the ALB (same origin, nginx proxies /api)
-  VITE_API_URL: http://axiomra-dev-alb-443631076.us-east-1.elb.amazonaws.com
+  ASG_NAME: safepassage-dev-asg
+  # Frontend uses same-origin relative /api (nginx proxies it), so no API URL
+  # needs to be baked in — the build is host/URL agnostic.
 
 jobs:
   deploy:
@@ -43,8 +43,6 @@ jobs:
         run: |
           npm ci
           npm run build
-        env:
-          VITE_API_URL: ${{ env.VITE_API_URL }}
 
       - name: Assemble deployment bundle
         run: |

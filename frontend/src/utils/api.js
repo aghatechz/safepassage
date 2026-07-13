@@ -1,6 +1,9 @@
 // API Fetch Utility with Hostname Extraction
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+// Default to a same-origin relative path ('') so the app works behind the ALB
+// (nginx proxies /api) in production and via the Vite dev proxy locally, without
+// depending on any specific host/URL. Override with VITE_API_URL if needed.
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 /**
  * Custom fetch wrapper that appends Auth headers, formats URL,
