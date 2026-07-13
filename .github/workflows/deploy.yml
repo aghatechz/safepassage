@@ -18,6 +18,7 @@ on:
     branches: [main, master]
   workflow_dispatch: {} # allows manual "Run workflow" button
 
+# v2 - fixed Node 24 compatibility & upgraded aws credentials action
 env:
   AWS_REGION: us-east-1
   S3_BUCKET: safepassage-dev-assets-b5026054
