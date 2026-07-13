@@ -75,7 +75,13 @@ jobs:
 
       - name: Trigger rolling deployment (ASG instance refresh)
         run: |
-          aws autoscaling start-instance-refresh \
-            --auto-scaling-group-name "${ASG_NAME}" \
-            --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":150}'
-          echo "Instance refresh started. New instances will pull the new bundle from S3."
+          if err=$(aws autoscaling start-instance-refresh \
+                     --auto-scaling-group-name "${ASG_NAME}" \
+                     --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":150}' 2>&1); then
+            echo "Instance refresh started. New instances will pull the new bundle from S3."
+          elif echo "$err" | grep -q "InstanceRefreshInProgress"; then
+            echo "A refresh is already in progress; it will roll out the latest bundle. Nothing to do."
+          else
+            echo "$err" >&2
+            exit 1
+          fi
