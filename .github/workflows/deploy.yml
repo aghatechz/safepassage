@@ -1,0 +1,80 @@
+name: Build & Deploy SafePassage
+
+# CI/CD pipeline (diagram: Developer -> Git -> GitHub Actions -> deploy -> instance refresh)
+# On every push to the default branch:
+#   1. Build the React/Vite frontend
+#   2. Bundle backend source + built frontend into app.tar.gz
+#   3. Upload the bundle to S3 (the same object the EC2 instances pull on boot)
+#   4. Trigger a rolling ASG instance refresh so every instance picks up the new build
+#
+# Required GitHub repo secrets (Settings -> Secrets and variables -> Actions):
+#   AWS_ACCESS_KEY_ID       - deploy IAM user's access key
+#   AWS_SECRET_ACCESS_KEY   - deploy IAM user's secret key
+# The IAM user only needs: s3:PutObject on the assets bucket, and
+# autoscaling:StartInstanceRefresh / DescribeAutoScalingGroups on the ASG.
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch: {} # allows manual "Run workflow" button
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: axiomra-dev-assets-b5026054
+  S3_KEY: deploy/app-latest.tar.gz
+  ASG_NAME: axiomra-dev-asg
+  # Frontend calls the API through the ALB (same origin, nginx proxies /api)
+  VITE_API_URL: http://axiomra-dev-alb-443631076.us-east-1.elb.amazonaws.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+        env:
+          VITE_API_URL: ${{ env.VITE_API_URL }}
+
+      - name: Assemble deployment bundle
+        run: |
+          set -euxo pipefail
+          rm -rf stage && mkdir -p stage/backend stage/frontend-dist
+          # Backend source only (instances run `npm install` at boot).
+          rsync -a \
+            --exclude 'node_modules' \
+            --exclude '.env' \
+            --exclude '*.log' \
+            --exclude 'uploads/*' \
+            backend/ stage/backend/
+          # Built static frontend.
+          cp -r frontend/dist/. stage/frontend-dist/
+          tar -czf app.tar.gz -C stage .
+          echo "Bundle contents:"; tar -tzf app.tar.gz | head -20
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload bundle to S3
+        run: aws s3 cp app.tar.gz "s3://${S3_BUCKET}/${S3_KEY}"
+
+      - name: Trigger rolling deployment (ASG instance refresh)
+        run: |
+          aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name "${ASG_NAME}" \
+            --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":150}'
+          echo "Instance refresh started. New instances will pull the new bundle from S3."
