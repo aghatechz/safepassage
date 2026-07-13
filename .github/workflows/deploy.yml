@@ -58,7 +58,7 @@ jobs:
           # Built static frontend.
           cp -r frontend/dist/. stage/frontend-dist/
           tar -czf app.tar.gz -C stage .
-          echo "Bundle contents:"; tar -tzf app.tar.gz | head -20
+          echo "Bundle contents:"; tar -tzf app.tar.gz | head -20 || true
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
