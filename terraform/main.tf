@@ -740,7 +740,9 @@ resource "aws_launch_template" "app" {
   block_device_mappings {
     device_name = "/dev/xvda"
     ebs {
-      volume_size           = 12
+      # Must be >= the AMI snapshot size (Amazon Linux 2023 root = 30GB),
+      # otherwise instances baked by Packer fail to launch.
+      volume_size           = 30
       volume_type           = "gp3"
       encrypted             = true
       kms_key_id            = aws_kms_key.main.arn
