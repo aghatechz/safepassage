@@ -1,0 +1,85 @@
+#!/bin/bash
+set -uxo pipefail
+exec > /var/log/user-data.log 2>&1
+echo "=== SafePassage user-data start: $(date) ==="
+
+dnf install -y nginx nodejs npm tar python3
+
+# --- fetch app bundle from S3 ---
+aws s3 cp s3://${bucket}/${key} /tmp/app.tar.gz --region ${region}
+rm -rf /opt/app && mkdir -p /opt/app
+tar -xzf /tmp/app.tar.gz -C /opt/app
+mkdir -p /opt/app/backend/uploads
+
+# --- backend dependencies ---
+cd /opt/app/backend
+npm install --omit=dev --no-audit --no-fund
+
+# --- pull secrets and write backend .env ---
+SECRET=$(aws secretsmanager get-secret-value --secret-id ${secret_arn} --region ${region} --query SecretString --output text)
+DB_URL=$(printf '%s' "$SECRET" | python3 -c "import sys,json;print(json.load(sys.stdin)['DATABASE_URL'])")
+JWT=$(printf '%s' "$SECRET" | python3 -c "import sys,json;print(json.load(sys.stdin)['JWT_SECRET'])")
+cat > /opt/app/backend/.env <<ENVFILE
+DATABASE_URL=$DB_URL
+JWT_SECRET=$JWT
+NODE_ENV=production
+PORT=5000
+ENVFILE
+
+# --- backend as a systemd service ---
+cat > /etc/systemd/system/safepassage.service <<'UNIT'
+[Unit]
+Description=SafePassage API
+After=network.target
+[Service]
+WorkingDirectory=/opt/app/backend
+ExecStart=/usr/bin/node server.js
+EnvironmentFile=/opt/app/backend/.env
+Restart=always
+RestartSec=5
+User=root
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now safepassage
+
+# --- nginx: serve the built frontend, reverse-proxy /api and /uploads ---
+cat > /etc/nginx/nginx.conf <<'NGINXCONF'
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log;
+pid /run/nginx.pid;
+events { worker_connections 1024; }
+http {
+  include /etc/nginx/mime.types;
+  default_type application/octet-stream;
+  sendfile on;
+  keepalive_timeout 65;
+  server {
+    listen 80 default_server;
+    root /opt/app/frontend-dist;
+    index index.html;
+
+    location /api/ {
+      proxy_pass http://127.0.0.1:5000;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /uploads/ {
+      proxy_pass http://127.0.0.1:5000;
+    }
+
+    location / {
+      try_files $uri $uri/ /index.html;
+    }
+  }
+}
+NGINXCONF
+systemctl enable nginx
+systemctl restart nginx
+
+echo "=== SafePassage user-data done: $(date) ==="

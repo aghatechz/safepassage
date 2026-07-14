@@ -29,3 +29,9 @@ nul
 
 # Misc
 *.tmp
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.auto.tfvars
