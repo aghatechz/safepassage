@@ -1,0 +1,15 @@
+[Unit]
+Description=SafePassage API
+After=network.target safepassage-env.service
+Requires=safepassage-env.service
+
+[Service]
+WorkingDirectory=/opt/app/backend
+ExecStart=/usr/bin/node server.js
+EnvironmentFile=/opt/app/backend/.env
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

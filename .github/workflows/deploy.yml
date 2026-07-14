@@ -1,53 +1,89 @@
 name: Build & Deploy SafePassage
 
-# CI/CD pipeline (diagram: Developer -> Git -> GitHub Actions -> deploy -> instance refresh)
-# On every push to the default branch:
-#   1. Build the React/Vite frontend
-#   2. Bundle backend source + built frontend into app.tar.gz
-#   3. Upload the bundle to S3 (the same object the EC2 instances pull on boot)
-#   4. Trigger a rolling ASG instance refresh so every instance picks up the new build
-#
-# Required GitHub repo secrets (Settings -> Secrets and variables -> Actions):
-#   AWS_ACCESS_KEY_ID       - deploy IAM user's access key
-#   AWS_SECRET_ACCESS_KEY   - deploy IAM user's secret key
+# CI/CD flow (matches the architecture diagram):
+#   1. TEST    - lint the frontend, syntax-check the backend
+#   2. BUILD   - build the React/Vite frontend, bundle backend + frontend
+#   3. AMI     - HashiCorp Packer bakes the app into a new AMI
+#   4. DEPLOY  - point the launch template at the new AMI + rolling instance refresh
+# Each stage only runs if the previous one passed (needs:).
 
 on:
   push:
     branches: [main, master]
-  workflow_dispatch: {} # allows the manual "Run workflow" button
+  workflow_dispatch: {}
 
 env:
   AWS_REGION: us-east-1
-  S3_BUCKET: safepassage-dev-assets-b5026054
-  S3_KEY: deploy/app-latest.tar.gz
   ASG_NAME: safepassage-dev-asg
 
 jobs:
-  deploy:
+  # ------------------------------------------------------------------ 1. TEST
+  test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "22"
 
-      - name: Build frontend 
+      - name: Lint frontend
+        working-directory: frontend
+        run: |
+          npm ci --legacy-peer-deps
+          npm run lint
+
+      - name: Syntax-check backend
+        working-directory: backend
+        run: |
+          npm ci --omit=dev
+          find . -path ./node_modules -prune -o -name '*.js' -print | xargs -I{} node --check "{}"
+          echo "Backend syntax OK"
+
+  # ----------------------------------------------------------------- 2. BUILD
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build frontend
         working-directory: frontend
         run: |
           npm ci --legacy-peer-deps
           npm run build
 
-      - name: Assemble deployment bundle
+      - name: Assemble app bundle
         run: |
           set -euxo pipefail
           rm -rf stage && mkdir -p stage/backend stage/frontend-dist
           rsync -a --exclude 'node_modules' --exclude '.env' --exclude '*.log' --exclude 'uploads/*' backend/ stage/backend/
           cp -r frontend/dist/. stage/frontend-dist/
           tar -czf app.tar.gz -C stage .
-          echo "Bundle contents:"; tar -tzf app.tar.gz | head -20 || true
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-bundle
+          path: app.tar.gz
+          retention-days: 1
+
+  # ------------------------------------------------------------------- 3. AMI
+  ami:
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      ami_id: ${{ steps.get_ami.outputs.ami_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download bundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: app-bundle
+          path: .
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -56,19 +92,60 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Upload bundle to S3
-        run: aws s3 cp app.tar.gz "s3://${S3_BUCKET}/${S3_KEY}"
+      - name: Set up Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          version: latest
 
-      # Start a rolling refresh. If one is already running that is NOT an error:
-      # the new bundle rolls out with it. Only a genuine failure fails this step.
-      - name: Trigger rolling deployment (ASG instance refresh)
+      - name: Build AMI with Packer
         run: |
+          packer init packer/safepassage.pkr.hcl
+          packer build -color=false packer/safepassage.pkr.hcl
+
+      - name: Extract new AMI id
+        id: get_ami
+        run: |
+          AMI=$(python3 -c "import json;print(json.load(open('packer-manifest.json'))['builds'][-1]['artifact_id'].split(':')[1])")
+          echo "Built AMI: $AMI"
+          echo "ami_id=$AMI" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------- 4. DEPLOY
+  deploy:
+    needs: ami
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Point launch template at new AMI + rolling refresh
+        env:
+          AMI_ID: ${{ needs.ami.outputs.ami_id }}
+        run: |
+          set -euo pipefail
+          LT_ID=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$ASG_NAME" --query "AutoScalingGroups[0].LaunchTemplate.LaunchTemplateId" --output text)
+          echo "Launch template: $LT_ID   new AMI: $AMI_ID"
+
+          # Baked AMI is self-contained; boot just re-fetches secrets + starts services.
+          UD=$(printf '#!/bin/bash\nsystemctl restart safepassage-env safepassage nginx\n' | base64 -w0)
+
+          NEWVER=$(aws ec2 create-launch-template-version \
+            --launch-template-id "$LT_ID" \
+            --source-version '$Latest' \
+            --launch-template-data "{\"ImageId\":\"$AMI_ID\",\"UserData\":\"$UD\"}" \
+            --query "LaunchTemplateVersion.VersionNumber" --output text)
+          aws ec2 modify-launch-template --launch-template-id "$LT_ID" --default-version "$NEWVER"
+          echo "Launch template version $NEWVER now uses AMI $AMI_ID."
+
           out=$(aws autoscaling start-instance-refresh --auto-scaling-group-name "$ASG_NAME" --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":150}' 2>&1) && rc=0 || rc=$?
           echo "$out"
           if [ "$rc" = "0" ]; then
-            echo "Refresh started - new instances will pull the latest bundle from S3."
+            echo "Rolling deployment started with the new AMI."
           elif echo "$out" | grep -q "InstanceRefreshInProgress"; then
-            echo "A refresh is already in progress - fine, the latest bundle rolls out with it. Treating as success."
+            echo "A refresh is already in progress - it will roll out the new launch template. OK."
           else
             echo "Real error above."; exit 1
-          fi 
+          fi

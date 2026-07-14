@@ -1,0 +1,15 @@
+[Unit]
+Description=Fetch SafePassage secrets into .env (runs before the app)
+After=network-online.target
+Wants=network-online.target
+Before=safepassage.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/fetch-env.sh
+Environment=SECRET_NAME=safepassage-dev-app-secrets
+Environment=REGION=us-east-1
+
+[Install]
+WantedBy=multi-user.target

@@ -71,7 +71,7 @@ export default function Landing() {
             </h1>
             
             <p className="mt-6 text-lg sm:text-xl text-slate-500 max-w-3xl mx-auto leading-relaxed">
-              Millions of job seekers from South & Southeast Asia fall victim to fake overseas job scams every year. 
+              Millionss of job seekers from South & Southeast Asia fall victim to fake overseas job scams every year. 
               SafePassage helps you verify recruitment agencies, report fraud, and protect others from being scammed.
             </p>
 
