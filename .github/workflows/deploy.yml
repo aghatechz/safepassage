@@ -10,32 +10,27 @@ name: Build & Deploy SafePassage
 # Required GitHub repo secrets (Settings -> Secrets and variables -> Actions):
 #   AWS_ACCESS_KEY_ID       - deploy IAM user's access key
 #   AWS_SECRET_ACCESS_KEY   - deploy IAM user's secret key
-# The IAM user only needs: s3:PutObject on the assets bucket, and
-# autoscaling:StartInstanceRefresh / DescribeAutoScalingGroups on the ASG.
 
 on:
   push:
     branches: [main, master]
-  workflow_dispatch: {} # allows manual "Run workflow" button
+  workflow_dispatch: {} # allows the manual "Run workflow" button
 
-# v2 - fixed Node 24 compatibility & upgraded aws credentials action
 env:
   AWS_REGION: us-east-1
   S3_BUCKET: safepassage-dev-assets-b5026054
   S3_KEY: deploy/app-latest.tar.gz
   ASG_NAME: safepassage-dev-asg
-  # Frontend uses same-origin relative /api (nginx proxies it), so no API URL
-  # needs to be baked in — the build is host/URL agnostic.
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
 
@@ -49,39 +44,31 @@ jobs:
         run: |
           set -euxo pipefail
           rm -rf stage && mkdir -p stage/backend stage/frontend-dist
-          # Backend source only (instances run `npm install` at boot).
-          rsync -a \
-            --exclude 'node_modules' \
-            --exclude '.env' \
-            --exclude '*.log' \
-            --exclude 'uploads/*' \
-            backend/ stage/backend/
-          # Built static frontend.
+          rsync -a --exclude 'node_modules' --exclude '.env' --exclude '*.log' --exclude 'uploads/*' backend/ stage/backend/
           cp -r frontend/dist/. stage/frontend-dist/
           tar -czf app.tar.gz -C stage .
           echo "Bundle contents:"; tar -tzf app.tar.gz | head -20 || true
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }} 
-          unset-current-credentials: true
-          special-characters-workaround: true
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Upload bundle to S3
         run: aws s3 cp app.tar.gz "s3://${S3_BUCKET}/${S3_KEY}"
 
+      # Start a rolling refresh. If one is already running that is NOT an error:
+      # the new bundle rolls out with it. Only a genuine failure fails this step.
       - name: Trigger rolling deployment (ASG instance refresh)
         run: |
-          if err=$(aws autoscaling start-instance-refresh \
-                     --auto-scaling-group-name "${ASG_NAME}" \
-                     --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":150}' 2>&1); then
-            echo "Instance refresh started. New instances will pull the new bundle from S3."
-          elif echo "$err" | grep -q "InstanceRefreshInProgress"; then
-            echo "A refresh is already in progress; it will roll out the latest bundle. Nothing to do."
+          out=$(aws autoscaling start-instance-refresh --auto-scaling-group-name "$ASG_NAME" --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":150}' 2>&1) && rc=0 || rc=$?
+          echo "$out"
+          if [ "$rc" = "0" ]; then
+            echo "Refresh started - new instances will pull the latest bundle from S3."
+          elif echo "$out" | grep -q "InstanceRefreshInProgress"; then
+            echo "A refresh is already in progress - fine, the latest bundle rolls out with it. Treating as success."
           else
-            echo "$err" >&2
-            exit 1
+            echo "Real error above."; exit 1
           fi
