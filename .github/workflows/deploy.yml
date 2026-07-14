@@ -34,7 +34,7 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Build frontend
+      - name: Build frontend 
         working-directory: frontend
         run: |
           npm ci --legacy-peer-deps

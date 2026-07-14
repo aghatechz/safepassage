@@ -89,7 +89,7 @@ export default function AgencyDetail({ user, setServedBy }) {
       <div className="mx-auto max-w-2xl px-4 py-16 text-center">
         <div className="card p-8 border-red-200">
           <AlertTriangle className="mx-auto h-12 w-12 text-red-500 mb-3" />
-          <h2 className="text-lg font-bold text-slate-900 mb-1">Agency Not Found</h2>
+          <h2 className="text-lg font-bold text-slate-900 mb-1">Agency Not Found.</h2>
           <p className="text-sm text-slate-500 mb-6">{error || 'Agency does not exist in our directory.'}</p>
           <Link
             to="/"
